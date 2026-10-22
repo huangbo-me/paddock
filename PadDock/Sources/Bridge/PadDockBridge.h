@@ -1,3 +1,4 @@
+#import "../KeychainSupport/include/PadDockKeychainSupport.h"
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
 @interface PDNative : NSObject

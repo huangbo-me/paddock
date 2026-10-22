@@ -14,12 +14,12 @@ final class CommerceStore: ObservableObject {
     var entitled: Bool { status.entitled }
     var title: String {
         switch status {
-        case .notStarted: return "开始 14 天完整试用"
+        case .notStarted: return "免费试用 14 天"
         case .trial(let days): return "试用中 · 剩余 \(days) 天"
-        case .licensed: return "已激活 · 当前大版本授权"
+        case .licensed: return "已激活"
         case .expired: return "试用已结束"
         case .clockChanged: return "请检查 Mac 日期与时间"
-        case .unavailable: return "授权记录暂不可用"
+        case .unavailable: return "暂时无法读取激活状态"
         }
     }
     init(storage: CommerceStorage = KeychainCommerceStorage()) { self.storage = storage; reload() }
@@ -52,7 +52,7 @@ final class CommerceStore: ObservableObject {
     }
     private func startTrialAuthorized() {
         guard let engine else { return }
-        do { try engine.startTrial(now: Date().timeIntervalSince1970); message = "试用已开始，14 天内可以使用完整功能。"; refresh(); onChange?() }
+        do { try engine.startTrial(now: Date().timeIntervalSince1970); message = "已开始试用。"; refresh(); onChange?() }
         catch { message = error.localizedDescription }
     }
     func activate() {
@@ -62,12 +62,12 @@ final class CommerceStore: ObservableObject {
         guard let engine else { return }
         do {
             try engine.activate(activationInput, now: Date().timeIntervalSince1970)
-            activationInput = ""; message = "激活成功。此授权可离线使用，无需定期联网验证。"
+            activationInput = ""; message = "激活成功。"
             refresh(); onChange?()
         } catch { message = error.localizedDescription }
     }
     func openPurchase() {
-        guard let url = purchaseURL else { message = "爱发电商品尚未上线，暂时无法购买。"; return }
+        guard let url = purchaseURL else { message = "暂未开放购买。"; return }
         if !NSWorkspace.shared.open(url) { message = "无法打开浏览器，请稍后重试。" }
     }
 }

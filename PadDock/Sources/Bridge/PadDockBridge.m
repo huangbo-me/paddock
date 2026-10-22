@@ -115,13 +115,13 @@ static void USBNotify(void *context,io_iterator_t iterator) {
         id d=[self findDevice:identifier];
         if(!d) { completion(@"未发现所选 iPad。请解锁设备并确认随航可用。"); return; }
         id config=[[NSClassFromString(@"SidecarDisplayConfig") alloc] init];
-        if(![config respondsToSelector:@selector(setTransport:)]) { completion(@"当前系统的随航接口不可用。"); return; }
+        if(![config respondsToSelector:@selector(setTransport:)]) { completion(@"当前系统暂时无法使用随航。"); return; }
         [config setTransport:2];
         [_manager connectToDevice:d withConfig:config completion:^(NSError *error) {
-            NSString *message=error ? [NSString stringWithFormat:@"随航连接失败（%@ %ld）。请检查解锁、信任与 Apple 账户。",error.domain,(long)error.code] : nil;
+            NSString *message=error ? @"连接失败，请解锁 iPad 并检查 Apple 账户。" : nil;
             dispatch_async(dispatch_get_main_queue(),^{ completion(message); });
         }];
-    } @catch(NSException *error) { (void)error; completion(@"系统随航接口发生变化，已停止此次连接。"); }
+    } @catch(NSException *error) { (void)error; completion(@"暂时无法连接，请稍后重试。"); }
 }
 - (void)disconnectDevice:(NSString *)identifier completion:(void (^)(NSString *))completion {
     @try {
@@ -137,30 +137,30 @@ static void USBNotify(void *context,io_iterator_t iterator) {
     if(_anchor) return nil;
     @try {
         Class dc=NSClassFromString(@"CGVirtualDisplayDescriptor"), vc=NSClassFromString(@"CGVirtualDisplay"), mc=NSClassFromString(@"CGVirtualDisplayMode"), sc=NSClassFromString(@"CGVirtualDisplaySettings");
-        if(!dc || !vc || !mc || !sc) return @"当前 macOS 不提供所需的虚拟显示器接口。";
+        if(!dc || !vc || !mc || !sc) return @"当前系统暂不支持仅用 iPad 显示。";
         id descriptor=[[dc alloc] init];
         [descriptor setValuesForKeysWithDictionary:@{@"name":@"PadDock Display",@"maxPixelsWide":@5120,@"maxPixelsHigh":@3200,@"vendorID":@0xF0B1,@"productID":@0xA016,@"serialNum":@0x5044001}];
         if([descriptor respondsToSelector:NSSelectorFromString(@"setSerialNumber:")]) [descriptor setValue:@0x5044001 forKey:@"serialNumber"];
         [descriptor setValue:dispatch_get_main_queue() forKey:@"queue"];
         [descriptor setSizeInMillimeters:CGSizeMake(250,174)];
         id display=[[vc alloc] initWithDescriptor:descriptor];
-        if(!display) return @"未能创建虚拟显示器。请保留原显示器并重新尝试。";
+        if(!display) return @"未能开启，请保留其他显示器后重试。";
         NSMutableArray *modes=[NSMutableArray array];
         for(NSArray *size in @[@[@1180,@820],@[@1116,@820],@[@1366,@1024],@[@1920,@1080],@[@2560,@1440],@[@2560,@1600]]) {
             id mode=[[mc alloc] initWithWidth:[size[0] unsignedIntValue] height:[size[1] unsignedIntValue] refreshRate:60];
             if(mode) [modes addObject:mode];
         }
         id settings=[[sc alloc] init]; [settings setValue:modes forKey:@"modes"]; [settings setValue:@1 forKey:@"hiDPI"];
-        if(![display applySettings:settings]) return @"系统拒绝了虚拟显示器配置。";
+        if(![display applySettings:settings]) return @"未能开启，请稍后重试。";
         _anchor=display;
         return nil;
-    } @catch(NSException *error) { (void)error; return @"虚拟显示器接口与此 macOS 不兼容。"; }
+    } @catch(NSException *error) { (void)error; return @"当前系统暂不支持仅用 iPad 显示。"; }
 }
 - (NSString *)mirrorAnchorToDevice:(NSString *)identifier {
     if(!_anchor) return nil;
     @try {
         uint32_t anchor=self.anchorID;
-        if(!CGDisplayIsOnline(anchor)) return @"虚拟显示器尚未在线。";
+        if(!CGDisplayIsOnline(anchor)) return @"正在准备画面，请稍候。";
         id device=[self findDevice:identifier];
         uint32_t source=device ? [self displayForDevice:device] : 0;
         if(!source || !CGDisplayIsOnline(source)) source=CGMainDisplayID();
@@ -172,8 +172,8 @@ static void USBNotify(void *context,io_iterator_t iterator) {
             if(e==kCGErrorSuccess) e=CGCompleteDisplayConfiguration(config,kCGConfigureForSession);
             else CGCancelDisplayConfiguration(config);
         }
-        return e==kCGErrorSuccess ? nil : [NSString stringWithFormat:@"显示器镜像设置失败（%d）。",e];
-    } @catch(NSException *error) { (void)error; return @"未能更新虚拟显示器镜像。"; }
+        return e==kCGErrorSuccess ? nil : @"画面设置失败，请稍后重试。";
+    } @catch(NSException *error) { (void)error; return @"未能更新画面，请稍后重试。"; }
 }
 - (BOOL)canReleaseAnchor {
     if(!_anchor) return YES;

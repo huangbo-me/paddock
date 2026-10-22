@@ -19,7 +19,7 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         let store = CommerceStore(storage: PreviewStorage())
-        let view = ScrollView { CommerceView(store: store, recoveryProtected: true).padding(24) }
+        let view = ScrollView { CommerceView(store: store).padding(24) }
             .frame(width: 660, height: 740).background(Color(red: 0.96, green: 0.965, blue: 0.95))
             .preferredColorScheme(.light)
         let w = NSWindow(contentViewController: NSHostingController(rootView: view))

@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add("断开 iPad…", #selector(disconnect), to: menu)
         }
         menu.addItem(.separator())
-        add("导出诊断…", #selector(diagnostics), to: menu)
+        add("导出问题报告…", #selector(diagnostics), to: menu)
         add("退出 PadDock", #selector(quit), to: menu, key: "q")
     }
     private func add(_ title: String, _ selector: Selector, to menu: NSMenu, key: String = "") {

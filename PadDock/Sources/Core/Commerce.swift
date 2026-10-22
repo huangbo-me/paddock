@@ -2,10 +2,10 @@ import Foundation
 import CryptoKit
 
 public enum CommerceError: String, LocalizedError {
-    case invalidLicense = "激活码无效或不适用于当前版本，请完整复制爱发电提供的激活码。"
-    case unavailable = "无法读取授权记录，请检查钥匙串或重启后重试。当前画面不会因此断开。"
-    case alreadyStarted = "此 Mac 已开始过试用，不能重新开始。"
-    case invalidConfiguration = "此安装包的授权配置无效，请联系开发者。"
+    case invalidLicense = "激活码无效，请检查后重试。"
+    case unavailable = "暂时无法读取激活状态，请重试。"
+    case alreadyStarted = "这台 Mac 已使用过试用。"
+    case invalidConfiguration = "无法激活，请重新安装最新版。"
     public var errorDescription: String? { rawValue }
 }
 public struct LicensePayload: Codable, Equatable {

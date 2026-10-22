@@ -12,16 +12,14 @@ struct Dashboard: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {
-                        Text(app.selectedPage == 0 ? "你的轻装桌面" : app.selectedPage == 1 ? "按你的方式连接" : app.selectedPage == 3 ? "购买与激活" : "运行状态与支持")
+                        Text(app.selectedPage == 0 ? "连接" : app.selectedPage == 1 ? "设置" : app.selectedPage == 3 ? "购买与激活" : "帮助")
                             .font(.system(size: 25, weight: .semibold, design: .rounded)).foregroundStyle(ink)
                         Spacer()
-                        Text("内测版 0.2").font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .padding(.horizontal, 10).padding(.vertical, 6).background(.white, in: Capsule()).foregroundStyle(.secondary)
                     }
                     if let error = app.errorMessage { notice(error, icon: "exclamationmark.triangle.fill", warning: true) }
                     if app.selectedPage == 0 { connectionPage }
                     else if app.selectedPage == 1 { settingsPage }
-                    else if app.selectedPage == 3 { CommerceView(store: app.commerce, recoveryProtected: app.recoveryProtected) }
+                    else if app.selectedPage == 3 { CommerceView(store: app.commerce) }
                     else { supportPage }
                 }.padding(30)
             }.background(paper)
@@ -37,15 +35,11 @@ struct Dashboard: View {
                 Text("PadDock").font(.system(size: 21, weight: .bold, design: .rounded)).foregroundStyle(ink)
             }.padding(.top, 29).padding(.bottom, 34)
             nav("连接", icon: "cable.connector", index: 0)
-            nav("偏好设置", icon: "slider.horizontal.3", index: 1)
+            nav("设置", icon: "slider.horizontal.3", index: 1)
             nav("购买与激活", icon: "key", index: 3)
-            nav("帮助与诊断", icon: "waveform.path.ecg", index: 2)
+            nav("帮助", icon: "questionmark.circle", index: 2)
             Spacer()
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) { Circle().fill(accent).frame(width: 6, height: 6); Text("本地运行").font(.system(size: 11, weight: .medium)) }
-                Text("设备信息保留在此 Mac。\n不上传画面，App 无需注册。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
-            }.padding(.bottom, 25)
+            Text("PadDock 0.2.1").font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 25)
         }.padding(.horizontal, 18).frame(maxHeight: .infinity).background(Color.white)
     }
     private func nav(_ title: String, icon: String, index: Int) -> some View {
@@ -63,7 +57,7 @@ struct Dashboard: View {
             CommerceBanner(store: app.commerce) { app.selectedPage = 3 }
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Label(app.legacy.isEmpty ? "桌面随行" : "检测到已有配置", systemImage: "sparkle").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
+                    Text(app.legacy.isEmpty ? "我的 iPad" : "发现旧版配置").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
                     Spacer()
                     Circle().fill(app.pairedDevice?.online == true || !app.legacy.isEmpty ? accent : Color.orange).frame(width: 8, height: 8)
                 }
@@ -75,25 +69,24 @@ struct Dashboard: View {
 
             if !app.legacy.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("接着使用你已经调好的桌面").font(.system(size: 15, weight: .semibold)).foregroundStyle(ink)
-                    Text("发现原型版后台任务。PadDock 尚未接管控制，当前画面不会受到影响。接管时会先建立新的支持屏幕，并备份旧版任务。")
+                    Text("继续使用原有设置").font(.system(size: 15, weight: .semibold)).foregroundStyle(ink)
+                    Text("保留已配对的 iPad，切换到新版。")
                         .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
-                    Button("接管现有配置") { app.migrateLegacy() }.buttonStyle(PrimaryStyle()).disabled(app.busy)
+                    Button("使用原有设置") { app.migrateLegacy() }.buttonStyle(PrimaryStyle()).disabled(app.busy)
                     if !app.installed { Text("请先将 App 拖入「应用程序」，再进行接管。") .font(.system(size: 11)).foregroundStyle(.secondary) }
                 }.card()
             } else if app.settings.pairing == nil {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("第一次使用，只需三步").font(.system(size: 15, weight: .semibold)).foregroundStyle(ink)
-                    step("01", "插入数据线", "只连接一台 iPad，解锁并信任此 Mac。")
-                    step("02", "选择你的 iPad", "使用同一 Apple 账户，并确保系统随航可用。")
+                    Text("连接你的 iPad").font(.system(size: 15, weight: .semibold)).foregroundStyle(ink)
+                    Text("用数据线连接并解锁 iPad，按提示信任这台 Mac。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     HStack {
                         Picker("iPad", selection: $app.selectedID) {
                             if app.devices.isEmpty { Text("尚未发现设备").tag("") }
                             ForEach(app.devices) { Text($0.name).tag($0.id) }
                         }.labelsHidden().frame(maxWidth: .infinity)
-                        Button("验证并绑定") { app.pairSelectedDevice() }.buttonStyle(PrimaryStyle()).disabled(app.busy || app.devices.isEmpty || app.usbSerials.count != 1 || !app.apiAvailable)
+                        Button("连接此 iPad") { app.pairSelectedDevice() }.buttonStyle(PrimaryStyle()).disabled(app.busy || app.devices.isEmpty || app.usbSerials.count != 1 || !app.apiAvailable)
                     }
-                    step("03", "完成自动连接", "验证稳定的 USB 画面后，才会保存设备配对。")
                     if app.usbSerials.count != 1 { Text(app.usbSerials.isEmpty ? "尚未检测到 USB iPad，请检查数据线。" : "检测到多台 USB iPad，请暂时只保留目标设备。") .font(.system(size: 11)).foregroundStyle(.orange) }
                 }.card()
             } else {
@@ -107,8 +100,6 @@ struct Dashboard: View {
                     }
                 }.card()
             }
-            Text("登录 Mac 后生效。FileVault 开机解锁和恢复模式不在支持范围内。")
-                .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3)
         }
     }
     private var deviceIllustration: some View {
@@ -129,41 +120,35 @@ struct Dashboard: View {
     private var settingsPage: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(spacing: 0) {
-                preference("插线自动连接", "只连接已绑定的 iPad，使用 USB 传输。", icon: "cable.connector", value: Binding(get: { app.settings.autoConnect }, set: app.setAutoConnect))
+                preference("插线自动连接", "接上这台 iPad 后自动连接。", icon: "cable.connector", value: Binding(get: { app.settings.autoConnect }, set: app.setAutoConnect))
                 Divider().padding(.leading, 54)
-                preference("无显示器模式", "通过虚拟屏幕支持只使用 iPad 的桌面。", icon: "display.2", value: Binding(get: { app.settings.headless }, set: app.setHeadless))
+                preference("仅用 iPad 显示", "不接其他显示器时开启。", icon: "display.2", value: Binding(get: { app.settings.headless }, set: app.setHeadless))
             }.card().disabled(!app.legacy.isEmpty || app.busy)
             VStack(alignment: .leading, spacing: 12) {
-                preference("登录时启动", "进入 Mac 桌面后，自动在菜单栏运行。", icon: "power", value: Binding(get: { app.loginEnabled }, set: app.setLogin))
+                preference("登录时启动", "登录 Mac 后自动运行。", icon: "power", value: Binding(get: { app.loginEnabled }, set: app.setLogin))
                 if app.needsLoginApproval { Button("在系统设置中允许") { app.openLoginSettings() }.buttonStyle(.bordered) }
                 if !app.installed { Text("从「应用程序」文件夹运行后才可启用。") .font(.system(size: 11)).foregroundStyle(.secondary) }
             }.card()
-            notice("无显示器模式会在系统显示器列表中增加「PadDock Display」，并镜像 iPad。关闭或退出前，请确认还有其他可用显示器。", icon: "info.circle", warning: false)
             VStack(alignment: .leading, spacing: 12) {
-                Text("重置与移除").font(.system(size: 15, weight: .semibold))
-                Text("清理配对、偏好设置和登录启动。完成后退出，将 App 移到废纸篓即可。") .font(.system(size: 12)).foregroundStyle(.secondary)
-                Button("清理本机配置…") { app.clearConfiguration() }.buttonStyle(.bordered).disabled(app.busy || !app.legacy.isEmpty)
+                Text("重置").font(.system(size: 15, weight: .semibold))
+                Button("重置设置…") { app.clearConfiguration() }.buttonStyle(.bordered).disabled(app.busy || !app.legacy.isEmpty)
             }.card()
         }
     }
     private var supportPage: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(spacing: 14) {
-                infoRow("随航接口", value: app.apiAvailable ? "可用" : "不可用")
-                infoRow("USB iPad", value: "\(app.usbSerials.count) 台")
-                infoRow("无显示器支持", value: app.anchorOnline ? "PadDock 支持屏幕在线" : "未由 PadDock 创建")
-                infoRow("后台控制", value: app.legacy.isEmpty ? "PadDock" : "旧版原型")
-                infoRow("数据处理", value: "仅保存在本机")
+                Text("无法连接？").font(.system(size: 15, weight: .semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                Text("检查数据线，解锁 iPad，并确认两台设备使用同一 Apple 账户。")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }.card()
             HStack {
-                Button("导出脱敏诊断…") { app.exportDiagnostics() }.buttonStyle(PrimaryStyle())
                 Button("打开显示器设置") { app.openDisplaySettings() }.buttonStyle(.bordered)
+                Button("导出问题报告…") { app.exportDiagnostics() }.buttonStyle(.bordered)
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text("当前内测范围").font(.system(size: 15, weight: .semibold))
-                Text("Apple Silicon Mac · macOS 14 或更新版本\n实际验证：M4 Mac mini + iPad（A16）\n其他机型和系统版本需进一步测试。") .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(6)
-                Divider()
-                Text("此版本使用 macOS 未公开的随航和虚拟显示器接口。系统升级可能影响功能。暂未完成 Developer ID 签名与苹果公证，不作为公开商业发行版。") .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5)
+                Text("关于 PadDock").font(.system(size: 15, weight: .semibold))
+                Text("0.2.1 · 内测版").font(.system(size: 12)).foregroundStyle(.secondary)
             }.card()
         }
     }
@@ -174,13 +159,6 @@ struct Dashboard: View {
             Spacer(); Toggle(title, isOn: value).labelsHidden().toggleStyle(.switch).tint(accent)
         }.padding(.vertical, 12)
     }
-    private func step(_ number: String, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(number).font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(accent).padding(7).background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
-            VStack(alignment: .leading, spacing: 3) { Text(title).font(.system(size: 12, weight: .semibold)); Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
-        }
-    }
-    private func infoRow(_ title: String, value: String) -> some View { HStack { Text(title).foregroundStyle(.secondary); Spacer(); Text(value).foregroundStyle(ink) }.font(.system(size: 12)) }
     private func notice(_ text: String, icon: String, warning: Bool) -> some View {
         HStack(alignment: .top, spacing: 10) { Image(systemName: icon); Text(text).fixedSize(horizontal: false, vertical: true).lineSpacing(4); Spacer(minLength: 0) }
             .font(.system(size: 12)).foregroundStyle(warning ? Color(red: 0.53, green: 0.29, blue: 0.10) : ink.opacity(0.7))

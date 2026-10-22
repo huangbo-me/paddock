@@ -3,6 +3,7 @@ import Security
 import LocalAuthentication
 #if SWIFT_PACKAGE
 import PadDockCore
+import PadDockKeychainSupport
 #endif
 
 public final class KeychainCommerceStorage: CommerceStorage {
@@ -28,21 +29,21 @@ public final class KeychainCommerceStorage: CommerceStorage {
         request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
         let context = LAContext(); context.interactionNotAllowed = !interactionAllowed
         request[kSecUseAuthenticationContext as String] = context
-        var item: CFTypeRef?
-        let result = SecItemCopyMatching(request as CFDictionary, &item)
+        var item: Unmanaged<CFTypeRef>?
+        let result = PDKeychainRead(request as CFDictionary, &item, interactionAllowed)
         if result == errSecItemNotFound { return nil }
-        guard result == errSecSuccess, let data = item as? Data else { throw CommerceError.unavailable }
+        guard result == errSecSuccess, let data = item?.takeRetainedValue() as? Data else { throw CommerceError.unavailable }
         return data
     }
     public func write(_ data: Data) throws {
         var request = query; let context = LAContext(); context.interactionNotAllowed = !interactionAllowed
         request[kSecUseAuthenticationContext as String] = context
-        let update = SecItemUpdate(request as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let update = PDKeychainUpdate(request as CFDictionary, [kSecValueData as String: data] as CFDictionary, interactionAllowed)
         if update == errSecItemNotFound {
             var item = query; item[kSecValueData as String] = data
             item[kSecUseAuthenticationContext as String] = context
             item[kSecAttrLabel as String] = "PadDock 授权与试用记录"
-            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw CommerceError.unavailable }
+            guard PDKeychainAdd(item as CFDictionary, interactionAllowed) == errSecSuccess else { throw CommerceError.unavailable }
         } else if update != errSecSuccess { throw CommerceError.unavailable }
     }
 }

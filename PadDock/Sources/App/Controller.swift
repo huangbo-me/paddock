@@ -13,7 +13,7 @@ final class Controller: ObservableObject {
     @Published var selectedID = ""
     @Published var action: ConnectionAction = .unpaired
     @Published var errorMessage: String?
-    @Published var note = "连接 iPad，开始你的轻装桌面。"
+    @Published var note = "连接你的 iPad。"
     @Published var busy = false
     @Published var legacy: [LegacyService] = []
     @Published var anchorOnline = false
@@ -45,7 +45,7 @@ final class Controller: ObservableObject {
     var statusTitle: String {
         if legacyDiscoveryFailed { return "暂时无法检查后台服务" }
         if !legacy.isEmpty { return "旧版服务正在运行" }
-        if pendingPairing != nil { return "正在验证 USB 连接" }
+        if pendingPairing != nil { return "正在连接 iPad" }
         if !apiAvailable { return "此系统暂不兼容" }
         switch action {
         case .unpaired: return "准备连接你的 iPad"
@@ -61,10 +61,10 @@ final class Controller: ObservableObject {
     }
     var statusSubtitle: String {
         if !legacy.isEmpty { return "当前连接由原型后台任务维护。接管前，PadDock 仅查看状态。" }
-        if action == .connected { return "USB 有线连接 · \(settings.headless ? "无显示器模式已开启" : "随航已就绪")" }
+        if action == .connected { return "已通过数据线连接" }
         if action == .waitingForDevice { return "请解锁 iPad，确认已信任此 Mac，并使用同一 Apple 账户。" }
-        if commerceBlocksAutomation { return "请开始试用或激活授权后恢复自动连接。当前画面和手动连接仍保留。" }
-        if action == .paused { return "保留当前画面；恢复后会继续检查这台 iPad。" }
+        if commerceBlocksAutomation { return "开始试用或激活后，即可自动连接。" }
+        if action == .paused { return "点击恢复，即可继续自动连接。" }
         return note
     }
     init() {
@@ -198,7 +198,7 @@ final class Controller: ObservableObject {
     }
     func disconnect() {
         guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, let pair = settings.pairing else { return }
-        guard confirm("断开 iPad？", "自动连接会暂停。如果 iPad 是唯一可见屏幕，你需要重新连接显示器或通过其他已配置的方式恢复操作。", button: "暂停并断开") else { return }
+        guard confirm("断开 iPad？", "断开后将暂停自动连接。如果只用 iPad 显示，请先接回其他显示器。", button: "暂停并断开") else { return }
         settings.paused = true; generation += 1; policy.reset(); action = .paused; save()
         if nativeGate.isBusy { nativeGate.requestDisconnect(); note = "等待当前连接请求结束后断开。" }
         else { performDisconnect(pair) }
@@ -218,11 +218,11 @@ final class Controller: ObservableObject {
         if enabled {
             guard requireEntitlement() else { return }
             guard settings.pairing != nil else { errorMessage = "请先绑定并验证一台 iPad。"; return }
-            guard confirm("开启无显示器模式？", "PadDock 会创建一块软件虚拟显示器并镜像 iPad。画面可能短暂闪烁；此模式依赖系统私有接口，系统升级后可能需要适配。", button: "开启") else { return }
+            guard confirm("仅用 iPad 显示？", "开启后可以拔掉其他显示器。画面可能短暂闪烁。", button: "开启") else { return }
             if let error = native.createAnchor() { errorMessage = error; return }
             settings.headless = true
         } else {
-            if !native.canReleaseAnchor() { errorMessage = "请先接回一台其他显示器，再关闭无显示器模式，避免 iPad 画面退出。"; return }
+            if !native.canReleaseAnchor() { errorMessage = "请先接回其他显示器，再关闭此选项。"; return }
             settings.headless = false; native.releaseAnchor()
         }
         save(); tick()
@@ -253,27 +253,27 @@ final class Controller: ObservableObject {
     func canQuit() -> Bool {
         if busy || nativeGate.isBusy { errorMessage = "正在完成操作，请稍后退出。"; return false }
         if native.anchorID != 0 && !native.canReleaseAnchor() {
-            return confirm("退出会中断 iPad 画面", "PadDock 正在维持无显示器模式。退出会移除虚拟显示器，随航可能随即退出。建议先接回其他显示器。", button: "仍然退出")
+            return confirm("退出会中断 iPad 画面", "请先接回其他显示器，避免退出后无法操作。", button: "仍然退出")
         }
         return true
     }
     func clearConfiguration() {
         guard !busy, !nativeGate.isBusy, !legacyDiscoveryFailed, legacy.isEmpty else { return }
         guard native.canReleaseAnchor() else { errorMessage = "请先接回其他显示器，再清理 PadDock。"; return }
-        guard confirm("清理 PadDock 配置？", "将关闭登录启动、移除本工具的虚拟显示器，并删除配对与偏好设置。备份、诊断文件及钥匙串中的授权和试用记录会保留。随后可退出并把 App 移到废纸篓。", button: "清理配置") else { return }
+        guard confirm("重置设置？", "将移除 iPad 配对并恢复默认设置，试用和购买记录不变。", button: "重置") else { return }
         do {
             if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval { try SMAppService.mainApp.unregister() }
             if FileManager.default.fileExists(atPath: AppFiles.settings.path) { try FileManager.default.removeItem(at: AppFiles.settings) }
             generation += 1; native.releaseAnchor(); settings = AppSettings(); policy = ConnectionPolicy(pairing: nil)
-            note = "本地配置已清理，可以退出并移除 App。"; refreshLoginStatus(); tick()
+            note = "设置已重置。"; refreshLoginStatus(); tick()
         } catch { errorMessage = "清理未完成：\(error.localizedDescription)" }
     }
     func exportDiagnostics() {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "PadDock-diagnostics.txt"
-        panel.title = "导出诊断（不含设备标识）"
+        panel.title = "导出问题报告"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let info = """
-        PadDock 0.2.0 internal beta
+        PadDock 0.2.1 internal beta
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         API available: \(apiAvailable)
         Paired: \(settings.pairing != nil)
@@ -286,7 +286,7 @@ final class Controller: ObservableObject {
 
         \(events.joined(separator: "\n"))
         """
-        do { try info.write(to: url, atomically: true, encoding: .utf8); note = "诊断已导出，不含设备名称或序列号。" }
+        do { try info.write(to: url, atomically: true, encoding: .utf8); note = "问题报告已导出。" }
         catch { errorMessage = "无法保存诊断：\(error.localizedDescription)" }
     }
 
@@ -301,7 +301,7 @@ final class Controller: ObservableObject {
               let device = devices.first(where: { $0.id == pair.sidecarID }), device.connected, device.online, device.transport == 2 else {
             errorMessage = "请先让旧版通过 USB 正常连接 iPad，再进行接管。"; return
         }
-        guard confirm("由 PadDock 接管自动连接？", "会先创建新的支持屏幕，再停用并备份旧版的两个登录任务。PadDock 将注册登录启动、沿用当前 iPad 配对并开启无显示器模式。原型程序和备份保留，出现问题可恢复。", button: "安全接管") else { return }
+        guard confirm("使用原有设置？", "将保留 iPad 配对并开启登录启动。切换期间画面可能短暂中断。", button: "继续") else { return }
         do {
             if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
             refreshLoginStatus()

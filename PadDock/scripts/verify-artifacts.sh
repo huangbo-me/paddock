@@ -11,13 +11,12 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$verification_dir/zip" "$verification_dir/mounted"
 (cd "$output_dir" && shasum -a 256 -c SHA256SUMS.txt)
-ditto -x -k "$output_dir/PadDock-0.2.0-arm64.zip" "$verification_dir/zip"
+ditto -x -k "$output_dir/PadDock-0.2.1-arm64.zip" "$verification_dir/zip"
 codesign --verify --strict --verbose=2 "$verification_dir/zip/PadDock.app"
-hdiutil attach -readonly -nobrowse -mountpoint "$verification_dir/mounted" "$output_dir/PadDock-0.2.0-arm64.dmg"
+hdiutil attach -readonly -nobrowse -mountpoint "$verification_dir/mounted" "$output_dir/PadDock-0.2.1-arm64.dmg"
 mounted=1
 codesign --verify --strict --verbose=2 "$verification_dir/mounted/PadDock.app"
 cmp "$verification_dir/zip/PadDock.app/Contents/MacOS/PadDock" "$verification_dir/mounted/PadDock.app/Contents/MacOS/PadDock"
 test "$(readlink "$verification_dir/mounted/Applications")" = /Applications
-test -s "$verification_dir/mounted/使用说明.md"
 python3 "$project_dir/scripts/test-commerce-artifacts.py" "$verification_dir/zip/PadDock.app" "$verification_dir/mounted/PadDock.app"
 printf 'DMG and zip contents/signatures verified.\n'

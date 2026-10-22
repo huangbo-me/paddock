@@ -4,7 +4,9 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 preview_dir="${PADDOCK_PREVIEW_PATH:-/private/tmp/PadDock Commerce Preview.app}"
 mkdir -p "$preview_dir/Contents/MacOS" "$preview_dir/Contents/Resources"
+xcrun clang -Wall -Wextra -Werror -mmacosx-version-min=14.0 -I Sources/KeychainSupport/include -c Sources/KeychainSupport/PadDockKeychainSupport.c -o .build/keychain-support.o
 xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library -module-cache-path .build/modules \
+ -import-objc-header Sources/KeychainSupport/include/PadDockKeychainSupport.h .build/keychain-support.o \
  Sources/Core/Commerce*.swift Sources/Storage/*.swift Sources/App/CommerceStore.swift \
  Sources/App/CommerceView.swift Sources/App/PrimaryStyle.swift Tests/Preview/Main.swift \
  -framework AppKit -framework SwiftUI -framework Security -framework LocalAuthentication \
