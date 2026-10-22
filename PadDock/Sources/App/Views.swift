@@ -12,15 +12,16 @@ struct Dashboard: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {
-                        Text(app.selectedPage == 0 ? "你的轻装桌面" : app.selectedPage == 1 ? "按你的方式连接" : "运行状态与支持")
+                        Text(app.selectedPage == 0 ? "你的轻装桌面" : app.selectedPage == 1 ? "按你的方式连接" : app.selectedPage == 3 ? "购买与激活" : "运行状态与支持")
                             .font(.system(size: 25, weight: .semibold, design: .rounded)).foregroundStyle(ink)
                         Spacer()
-                        Text("内测版 0.1").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        Text("内测版 0.2").font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .padding(.horizontal, 10).padding(.vertical, 6).background(.white, in: Capsule()).foregroundStyle(.secondary)
                     }
                     if let error = app.errorMessage { notice(error, icon: "exclamationmark.triangle.fill", warning: true) }
                     if app.selectedPage == 0 { connectionPage }
                     else if app.selectedPage == 1 { settingsPage }
+                    else if app.selectedPage == 3 { CommerceView(store: app.commerce, recoveryProtected: app.recoveryProtected) }
                     else { supportPage }
                 }.padding(30)
             }.background(paper)
@@ -37,11 +38,12 @@ struct Dashboard: View {
             }.padding(.top, 29).padding(.bottom, 34)
             nav("连接", icon: "cable.connector", index: 0)
             nav("偏好设置", icon: "slider.horizontal.3", index: 1)
+            nav("购买与激活", icon: "key", index: 3)
             nav("帮助与诊断", icon: "waveform.path.ecg", index: 2)
             Spacer()
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) { Circle().fill(accent).frame(width: 6, height: 6); Text("本地运行").font(.system(size: 11, weight: .medium)) }
-                Text("设备信息保留在此 Mac。\n不上传画面，不需要账户。")
+                Text("设备信息保留在此 Mac。\n不上传画面，App 无需注册。")
                     .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
             }.padding(.bottom, 25)
         }.padding(.horizontal, 18).frame(maxHeight: .infinity).background(Color.white)
@@ -58,6 +60,7 @@ struct Dashboard: View {
     }
     private var connectionPage: some View {
         VStack(alignment: .leading, spacing: 20) {
+            CommerceBanner(store: app.commerce) { app.selectedPage = 3 }
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Label(app.legacy.isEmpty ? "桌面随行" : "检测到已有配置", systemImage: "sparkle").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
@@ -186,10 +189,4 @@ struct Dashboard: View {
 }
 private extension View {
     func card() -> some View { padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color.white, in: RoundedRectangle(cornerRadius: 15)) }
-}
-struct PrimaryStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
-            .padding(.horizontal, 16).padding(.vertical, 10).background(accent.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 9))
-    }
 }

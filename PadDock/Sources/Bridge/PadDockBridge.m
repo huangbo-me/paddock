@@ -102,7 +102,7 @@ static void USBNotify(void *context,io_iterator_t iterator) {
         CGDirectDisplayID ids[32]; uint32_t count=0;
         NSMutableArray *displays=[NSMutableArray array];
         if(CGGetOnlineDisplayList(32,ids,&count)==kCGErrorSuccess) for(uint32_t i=0;i<count;i++) {
-            [displays addObject:@{@"id":@(ids[i]),@"main":@(CGDisplayIsMain(ids[i])),@"mirrorOf":@(CGDisplayMirrorsDisplay(ids[i])),@"anchor":@(ids[i]==self.anchorID)}];
+            [displays addObject:@{@"id":@(ids[i]),@"main":@(CGDisplayIsMain(ids[i])),@"builtIn":@(CGDisplayIsBuiltin(ids[i])),@"mirrorOf":@(CGDisplayMirrorsDisplay(ids[i])),@"anchor":@(ids[i]==self.anchorID)}];
         }
         return @{@"usb":USBDevices(),@"devices":devices,@"locked":@(locked),@"available":@(self.available),@"anchorID":@(self.anchorID),@"displays":displays};
     } @catch(NSException *error) {

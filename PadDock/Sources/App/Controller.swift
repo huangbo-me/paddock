@@ -4,6 +4,9 @@ import ServiceManagement
 
 final class Controller: ObservableObject {
     let native = PDNative()
+    let commerce = CommerceStore()
+    @Published var recoveryProtected = false
+    @Published var commerceBlocksAutomation = false
     @Published var settings = AppSettings()
     @Published var devices: [Device] = []
     @Published var usbSerials: [String] = []
@@ -60,6 +63,7 @@ final class Controller: ObservableObject {
         if !legacy.isEmpty { return "当前连接由原型后台任务维护。接管前，PadDock 仅查看状态。" }
         if action == .connected { return "USB 有线连接 · \(settings.headless ? "无显示器模式已开启" : "随航已就绪")" }
         if action == .waitingForDevice { return "请解锁 iPad，确认已信任此 Mac，并使用同一 Apple 账户。" }
+        if commerceBlocksAutomation { return "请开始试用或激活授权后恢复自动连接。当前画面和手动连接仍保留。" }
         if action == .paused { return "保留当前画面；恢复后会继续检查这台 iPad。" }
         return note
     }
@@ -67,6 +71,7 @@ final class Controller: ObservableObject {
         do { settings = try AppFiles.load() }
         catch { settings.paused = true; errorMessage = "无法读取本地设置。\(error.localizedDescription)" }
         policy = ConnectionPolicy(pairing: settings.pairing)
+        commerce.onChange = { [weak self] in self?.policy.reset(); self?.tick() }
         refreshLegacy()
         native.usbChanged = { [weak self] in self?.tick() }
         native.startUSBMonitoring()
@@ -87,6 +92,7 @@ final class Controller: ObservableObject {
         guard !tickRunning else { return }; tickRunning = true
         defer { tickRunning = false; onChange?() }
         let now = ProcessInfo.processInfo.systemUptime
+        commerce.refresh()
         let snapshot = native.snapshot()
         devices = (snapshot["devices"] as? [[String: Any]] ?? []).compactMap(Device.init)
         usbSerials = (snapshot["usb"] as? [[String: Any]] ?? []).compactMap { $0["serial"] as? String }
@@ -113,7 +119,18 @@ final class Controller: ObservableObject {
         }
         guard !busy, !nativeGate.isBusy else { return }
         policy.pairing = settings.pairing
-        policy.paused = settings.paused || (!settings.autoConnect && now > manualUntil)
+        // Unknown display classification keeps recovery available; never infer a safe screen from it.
+        let sidecarIDs = Set(devices.filter { $0.connected }.map(\.displayID))
+        let classified = apiAvailable && !sidecarIDs.contains(0)
+        let independent = classified && displays.contains {
+            guard let id = ($0["id"] as? NSNumber)?.uint32Value else { return false }
+            return CommerceAccess.isIndependentUsableScreen(builtIn: ($0["builtIn"] as? Bool) == true,
+                anchor: id == native.anchorID, sidecar: sidecarIDs.contains(id), classificationKnown: classified)
+        }
+        recoveryProtected = !commerce.entitled && settings.pairing != nil && settings.headless && !independent
+        let permitted = CommerceAccess.allowsAutomaticConnection(entitled: commerce.entitled, paired: settings.pairing != nil, headless: settings.headless, independentDisplay: independent)
+        commerceBlocksAutomation = !permitted && now > manualUntil
+        policy.paused = settings.paused || (!settings.autoConnect && now > manualUntil) || commerceBlocksAutomation
         let locked = snapshot["locked"] as? Bool ?? true
         if settings.headless && settings.pairing != nil && native.anchorID == 0 && !policy.paused && !locked {
             if let error = native.createAnchor() { errorMessage = error; return }
@@ -146,6 +163,7 @@ final class Controller: ObservableObject {
         if action == .connected { errorMessage = nil }
     }
     func pairSelectedDevice() {
+        guard requireEntitlement() else { return }
         guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !nativeGate.isBusy, apiAvailable else { return }
         guard PairingCandidate.valid(usbSerials: usbSerials, selectedID: selectedID, availableIDs: devices.map(\.id)),
               let device = devices.first(where: { $0.id == selectedID }), let usb = usbSerials.first else {
@@ -198,6 +216,7 @@ final class Controller: ObservableObject {
     func setHeadless(_ enabled: Bool) {
         guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !nativeGate.isBusy else { return }
         if enabled {
+            guard requireEntitlement() else { return }
             guard settings.pairing != nil else { errorMessage = "请先绑定并验证一台 iPad。"; return }
             guard confirm("开启无显示器模式？", "PadDock 会创建一块软件虚拟显示器并镜像 iPad。画面可能短暂闪烁；此模式依赖系统私有接口，系统升级后可能需要适配。", button: "开启") else { return }
             if let error = native.createAnchor() { errorMessage = error; return }
@@ -241,7 +260,7 @@ final class Controller: ObservableObject {
     func clearConfiguration() {
         guard !busy, !nativeGate.isBusy, !legacyDiscoveryFailed, legacy.isEmpty else { return }
         guard native.canReleaseAnchor() else { errorMessage = "请先接回其他显示器，再清理 PadDock。"; return }
-        guard confirm("清理 PadDock 配置？", "将关闭登录启动、移除本工具的虚拟显示器，并删除配对与偏好设置。备份的旧版任务和诊断导出文件会保留。随后可退出并把 App 移到废纸篓。", button: "清理配置") else { return }
+        guard confirm("清理 PadDock 配置？", "将关闭登录启动、移除本工具的虚拟显示器，并删除配对与偏好设置。备份、诊断文件及钥匙串中的授权和试用记录会保留。随后可退出并把 App 移到废纸篓。", button: "清理配置") else { return }
         do {
             if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval { try SMAppService.mainApp.unregister() }
             if FileManager.default.fileExists(atPath: AppFiles.settings.path) { try FileManager.default.removeItem(at: AppFiles.settings) }
@@ -254,7 +273,7 @@ final class Controller: ObservableObject {
         panel.title = "导出诊断（不含设备标识）"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let info = """
-        PadDock 0.1.0 internal beta
+        PadDock 0.2.0 internal beta
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         API available: \(apiAvailable)
         Paired: \(settings.pairing != nil)
@@ -272,6 +291,7 @@ final class Controller: ObservableObject {
     }
 
     func migrateLegacy() {
+        guard requireEntitlement() else { return }
         guard !busy, !nativeGate.isBusy, !legacyDiscoveryFailed, !legacy.isEmpty else { return }
         guard legacy.allSatisfy({ FileManager.default.fileExists(atPath: $0.plist.path) }) else {
             errorMessage = "检测到旧任务仍已加载，但找不到它的启动配置。为保证能够回滚，暂不接管；请先恢复旧任务的 plist 文件。"; return
@@ -359,6 +379,13 @@ final class Controller: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.sampleMigration(pair, deadline: deadline, stableSince: stable, completion: completion)
         }
+    }
+    private func requireEntitlement() -> Bool {
+        commerce.refresh()
+        guard commerce.entitled else {
+            selectedPage = 3; commerce.message = "请先开始 14 天试用或输入激活码。"; return false
+        }
+        return true
     }
     private func refreshLegacy() {
         do { legacy = try AppFiles.legacyServices(); legacyDiscoveryFailed = false }

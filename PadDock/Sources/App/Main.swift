@@ -4,6 +4,16 @@ import SwiftUI
 @main
 enum PadDockMain {
     static func main() {
+        if let index = CommandLine.arguments.firstIndex(of: "--verify-license-file") {
+            do {
+                guard CommandLine.arguments.count > index + 1,
+                      let configURL = Bundle.main.url(forResource: "Commerce", withExtension: "json") else { throw CommerceError.invalidConfiguration }
+                let config = try JSONDecoder().decode(CommerceConfiguration.self, from: Data(contentsOf: configURL))
+                let code = try String(contentsOfFile: CommandLine.arguments[index + 1], encoding: .utf8)
+                _ = try config.verifier().verify(code, now: Date().timeIntervalSince1970)
+                print("License verified against bundled public key; no activation or display changes."); exit(0)
+            } catch { fputs("License verification failed.\n", stderr); exit(1) }
+        }
         if CommandLine.arguments.contains("--self-check") {
             let native = PDNative(); let snapshot = native.snapshot()
             let report: [String: Any] = [
@@ -48,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let status = NSMenuItem(title: controller.statusTitle, action: nil, keyEquivalent: ""); status.isEnabled = false; menu.addItem(status)
         menu.addItem(.separator())
         add("打开 PadDock…", #selector(showWindow), to: menu, key: "o")
+        add("购买与激活…", #selector(commerce), to: menu)
         if controller.legacy.isEmpty && controller.settings.pairing != nil {
             add("立即连接", #selector(connect), to: menu)
             add(controller.settings.paused ? "恢复自动连接" : "暂停自动连接", #selector(pause), to: menu)
@@ -72,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
+    @objc private func commerce() { controller.selectedPage = 3; showWindow() }
     @objc private func connect() { controller.connectNow() }
     @objc private func pause() { controller.togglePause() }
     @objc private func disconnect() { controller.disconnect() }
