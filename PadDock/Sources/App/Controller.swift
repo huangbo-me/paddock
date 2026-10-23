@@ -4,9 +4,6 @@ import ServiceManagement
 
 final class Controller: ObservableObject {
     let native = PDNative()
-    let commerce = CommerceStore()
-    @Published var recoveryProtected = false
-    @Published var commerceBlocksAutomation = false
     @Published var settings = AppSettings()
     @Published var devices: [Device] = []
     @Published var usbSerials: [String] = []
@@ -21,6 +18,11 @@ final class Controller: ObservableObject {
     @Published var needsLoginApproval = false
     @Published var apiAvailable = true
     @Published var selectedPage = 0
+    @Published private(set) var disconnecting = false
+    @Published private(set) var disconnectFailed = false
+    private var disconnection = DisconnectionPolicy()
+    private var disconnectTarget: Pairing?
+    private var disconnectDisplayID: UInt32 = 0
     private var policy = ConnectionPolicy(pairing: nil)
     private var timer: Timer?
     private var events: [String] = []
@@ -38,6 +40,11 @@ final class Controller: ObservableObject {
     private var legacyCheckAt: Double = 0
     var onChange: (() -> Void)?
     var pairedDevice: Device? { devices.first { $0.id == settings.pairing?.sidecarID } }
+    var isConnected: Bool {
+        guard let device = pairedDevice else { return false }
+        return device.connected && device.online && device.transport == 2
+    }
+    var automaticConnectionTitle: String { settings.autoConnect && !settings.paused ? "暂停自动连接" : "开启自动连接" }
     var installed: Bool {
         let path = Bundle.main.bundleURL.standardizedFileURL.path
         return path.hasPrefix("/Applications/") || path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path + "/")
@@ -47,6 +54,11 @@ final class Controller: ObservableObject {
         if !legacy.isEmpty { return "旧版服务正在运行" }
         if pendingPairing != nil { return "正在连接 iPad" }
         if !apiAvailable { return "此系统暂不兼容" }
+        if disconnecting { return "正在断开 iPad" }
+        if disconnectFailed { return "断开未完成" }
+        if isConnected { return "iPad 已连接" }
+        if pairedDevice?.connected == true || pairedDevice?.online == true { return "iPad 画面仍连接" }
+        if settings.paused && settings.pairing != nil { return "iPad 已断开" }
         switch action {
         case .unpaired: return "准备连接你的 iPad"
         case .paused: return "自动连接已暂停"
@@ -61,17 +73,17 @@ final class Controller: ObservableObject {
     }
     var statusSubtitle: String {
         if !legacy.isEmpty { return "当前连接由原型后台任务维护。接管前，PadDock 仅查看状态。" }
-        if action == .connected { return "已通过数据线连接" }
+        if disconnecting { return "正在等待系统关闭随航画面，自动连接已暂停。" }
+        if disconnectFailed { return "自动连接已暂停，请重试断开或在系统显示器设置中结束随航。" }
+        if isConnected { return settings.paused || !settings.autoConnect ? "当前画面仍连接，自动连接已暂停。点击「断开」可结束画面。" : "已通过数据线连接" }
         if action == .waitingForDevice { return "请解锁 iPad，确认已信任此 Mac，并使用同一 Apple 账户。" }
-        if commerceBlocksAutomation { return "开始试用或激活后，即可自动连接。" }
-        if action == .paused { return "点击恢复，即可继续自动连接。" }
+        if action == .paused { return "自动连接已暂停。点击「立即连接」手动连接，或开启自动连接。" }
         return note
     }
     init() {
         do { settings = try AppFiles.load() }
         catch { settings.paused = true; errorMessage = "无法读取本地设置。\(error.localizedDescription)" }
         policy = ConnectionPolicy(pairing: settings.pairing)
-        commerce.onChange = { [weak self] in self?.policy.reset(); self?.tick() }
         refreshLegacy()
         native.usbChanged = { [weak self] in self?.tick() }
         native.startUSBMonitoring()
@@ -92,7 +104,6 @@ final class Controller: ObservableObject {
         guard !tickRunning else { return }; tickRunning = true
         defer { tickRunning = false; onChange?() }
         let now = ProcessInfo.processInfo.systemUptime
-        commerce.refresh()
         let snapshot = native.snapshot()
         devices = (snapshot["devices"] as? [[String: Any]] ?? []).compactMap(Device.init)
         usbSerials = (snapshot["usb"] as? [[String: Any]] ?? []).compactMap { $0["serial"] as? String }
@@ -101,6 +112,17 @@ final class Controller: ObservableObject {
         anchorOnline = native.anchorID != 0 && displays.contains { ($0["id"] as? NSNumber)?.uint32Value == native.anchorID }
         if now > legacyCheckAt && !busy { refreshLegacy(); legacyCheckAt = now + 10 }
         if selectedID.isEmpty || !devices.contains(where: { $0.id == selectedID }) { selectedID = devices.first?.id ?? "" }
+        // Keep an explicit disconnect intent after the first offline snapshot. A late
+        // system connection must not undo the user's request while automation is paused.
+        if !disconnecting, !disconnectFailed, settings.paused, let target = disconnectTarget,
+           pairedDevice?.connected == true || pairedDevice?.online == true {
+            log("检测到迟到连接，重新执行用户的断开请求")
+            beginDisconnection(target)
+        }
+        if disconnecting {
+            reconcileDisconnection(now: now, displays: displays)
+            return
+        }
         guard legacy.isEmpty, !legacyDiscoveryFailed, apiAvailable else { return }
         if let pending = pendingPairing {
             let device = devices.first { $0.id == pending.sidecarID }
@@ -119,24 +141,13 @@ final class Controller: ObservableObject {
         }
         guard !busy, !nativeGate.isBusy else { return }
         policy.pairing = settings.pairing
-        // Unknown display classification keeps recovery available; never infer a safe screen from it.
-        let sidecarIDs = Set(devices.filter { $0.connected }.map(\.displayID))
-        let classified = apiAvailable && !sidecarIDs.contains(0)
-        let independent = classified && displays.contains {
-            guard let id = ($0["id"] as? NSNumber)?.uint32Value else { return false }
-            return CommerceAccess.isIndependentUsableScreen(builtIn: ($0["builtIn"] as? Bool) == true,
-                anchor: id == native.anchorID, sidecar: sidecarIDs.contains(id), classificationKnown: classified)
-        }
-        recoveryProtected = !commerce.entitled && settings.pairing != nil && settings.headless && !independent
-        let permitted = CommerceAccess.allowsAutomaticConnection(entitled: commerce.entitled, paired: settings.pairing != nil, headless: settings.headless, independentDisplay: independent)
-        commerceBlocksAutomation = !permitted && now > manualUntil
-        policy.paused = settings.paused || (!settings.autoConnect && now > manualUntil) || commerceBlocksAutomation
+        policy.paused = settings.paused || (!settings.autoConnect && now > manualUntil)
         let locked = snapshot["locked"] as? Bool ?? true
         if settings.headless && settings.pairing != nil && native.anchorID == 0 && !policy.paused && !locked {
             if let error = native.createAnchor() { errorMessage = error; return }
             log("已创建无显示器支持屏幕")
         }
-        if native.anchorID != 0, let pair = settings.pairing {
+        if !settings.paused, native.anchorID != 0, let pair = settings.pairing {
             if let error = native.mirrorAnchor(toDevice: pair.sidecarID) {
                 if error != lastMirrorError { log("镜像配置暂未完成"); lastMirrorError = error }
             } else { lastMirrorError = nil }
@@ -163,7 +174,6 @@ final class Controller: ObservableObject {
         if action == .connected { errorMessage = nil }
     }
     func pairSelectedDevice() {
-        guard requireEntitlement() else { return }
         guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !nativeGate.isBusy, apiAvailable else { return }
         guard PairingCandidate.valid(usbSerials: usbSerials, selectedID: selectedID, availableIDs: devices.map(\.id)),
               let device = devices.first(where: { $0.id == selectedID }), let usb = usbSerials.first else {
@@ -188,35 +198,82 @@ final class Controller: ObservableObject {
         errorMessage = error; log("配对未完成，未保存设备标识")
     }
     func togglePause() {
-        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy else { return }
-        settings.paused.toggle(); generation += 1; policy.reset(); action = settings.paused ? .paused : .connecting; save(); tick()
+        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !disconnecting, !nativeGate.isBusy else { return }
+        disconnectFailed = false
+        disconnectTarget = nil
+        if !settings.autoConnect { settings.autoConnect = true; settings.paused = false }
+        else { settings.paused.toggle() }
+        generation += 1; policy.reset(); action = settings.paused ? .paused : .connecting; save(); tick()
     }
     func connectNow() {
+        guard !isConnected, !disconnecting else { return }
         guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !nativeGate.isBusy, settings.pairing != nil else { return }
+        disconnectFailed = false; disconnectTarget = nil
         settings.paused = false; manualUntil = ProcessInfo.processInfo.systemUptime + 120
         policy.reset(); save(); tick()
     }
     func disconnect() {
-        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, let pair = settings.pairing else { return }
+        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !disconnecting, let pair = settings.pairing else { return }
         guard confirm("断开 iPad？", "断开后将暂停自动连接。如果只用 iPad 显示，请先接回其他显示器。", button: "暂停并断开") else { return }
-        settings.paused = true; generation += 1; policy.reset(); action = .paused; save()
-        if nativeGate.isBusy { nativeGate.requestDisconnect(); note = "等待当前连接请求结束后断开。" }
-        else { performDisconnect(pair) }
+        beginDisconnection(pair)
+    }
+    func beginDisconnection(_ pair: Pairing) {
+        guard !disconnecting else { return }
+        settings.paused = true; manualUntil = 0; generation += 1; policy.reset(); action = .paused; save()
+        disconnectTarget = pair; disconnectDisplayID = pairedDevice?.displayID ?? 0
+        disconnecting = true; disconnectFailed = false; errorMessage = nil
+        disconnection.start(now: ProcessInfo.processInfo.systemUptime)
+        log("用户请求断开，已暂停自动连接")
+        if nativeGate.isBusy { nativeGate.requestDisconnect(); log("等待原生请求结束后断开") }
         tick()
+    }
+    private func reconcileDisconnection(now: Double, displays: [[String: Any]]) {
+        guard let pair = disconnectTarget else { return }
+        let device = devices.first { $0.id == pair.sidecarID }
+        if let displayID = device?.displayID, displayID != 0 { disconnectDisplayID = displayID }
+        let screenOnline = device?.online == true || (disconnectDisplayID != 0 && displays.contains {
+            ($0["id"] as? NSNumber)?.uint32Value == disconnectDisplayID
+        })
+        switch disconnection.next(now: now, observable: apiAvailable && !legacyDiscoveryFailed,
+                                  connected: device?.connected == true, displayOnline: screenOnline, requestBusy: nativeGate.isBusy) {
+        case .wait: break
+        case .send: performDisconnect(pair)
+        case .completed:
+            disconnecting = false; disconnectFailed = false
+            errorMessage = nil; note = "iPad 已断开，自动连接已暂停。"; log("已验证随航会话与画面均离线")
+        case .failed:
+            disconnecting = false; disconnectFailed = true
+            errorMessage = nativeGate.isBusy
+                ? "系统请求未响应，断开尚未完成。请在系统显示器设置中断开随航；自动连接已暂停。"
+                : "未能确认随航画面已关闭，请重试断开或在系统显示器设置中断开随航。自动连接已暂停。"
+            log("断开验证失败或超时，保持暂停")
+        }
     }
     private func performDisconnect(_ pair: Pairing) {
         guard let operation = nativeGate.begin(.disconnect) else { return }
+        if !disconnecting, settings.paused, disconnectTarget != nil {
+            disconnecting = true; disconnectFailed = false
+            disconnection.start(now: ProcessInfo.processInfo.systemUptime)
+        }
+        log("发送系统断开请求")
         native.disconnectDevice(pair.sidecarID) { [weak self] error in
             guard let self else { return }
             _ = self.nativeGate.finish(operation, succeeded: error == nil)
-            self.errorMessage = error; self.tick()
+            self.disconnection.requestFinished(now: ProcessInfo.processInfo.systemUptime)
+            self.log(error == nil ? "系统已接受断开请求，继续核验画面" : "系统断开请求返回错误")
+            if let error { self.errorMessage = error }
+            self.tick()
         }
     }
-    func setAutoConnect(_ enabled: Bool) { settings.autoConnect = enabled; save(); tick() }
+    func setAutoConnect(_ enabled: Bool) {
+        guard !disconnecting, !nativeGate.isBusy else { return }
+        settings.autoConnect = enabled
+        if enabled { settings.paused = false; disconnectFailed = false; disconnectTarget = nil }
+        save(); tick()
+    }
     func setHeadless(_ enabled: Bool) {
-        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !nativeGate.isBusy else { return }
+        guard legacy.isEmpty, !legacyDiscoveryFailed, !busy, !disconnecting, !nativeGate.isBusy else { return }
         if enabled {
-            guard requireEntitlement() else { return }
             guard settings.pairing != nil else { errorMessage = "请先绑定并验证一台 iPad。"; return }
             guard confirm("仅用 iPad 显示？", "开启后可以拔掉其他显示器。画面可能短暂闪烁。", button: "开启") else { return }
             if let error = native.createAnchor() { errorMessage = error; return }
@@ -251,16 +308,16 @@ final class Controller: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
     func canQuit() -> Bool {
-        if busy || nativeGate.isBusy { errorMessage = "正在完成操作，请稍后退出。"; return false }
+        if busy || disconnecting || nativeGate.isBusy { errorMessage = "正在完成操作，请稍后退出。"; return false }
         if native.anchorID != 0 && !native.canReleaseAnchor() {
             return confirm("退出会中断 iPad 画面", "请先接回其他显示器，避免退出后无法操作。", button: "仍然退出")
         }
         return true
     }
     func clearConfiguration() {
-        guard !busy, !nativeGate.isBusy, !legacyDiscoveryFailed, legacy.isEmpty else { return }
+        guard !busy, !disconnecting, !nativeGate.isBusy, !legacyDiscoveryFailed, legacy.isEmpty else { return }
         guard native.canReleaseAnchor() else { errorMessage = "请先接回其他显示器，再清理 PadDock。"; return }
-        guard confirm("重置设置？", "将移除 iPad 配对并恢复默认设置，试用和购买记录不变。", button: "重置") else { return }
+        guard confirm("重置设置？", "将移除 iPad 配对并恢复默认设置。", button: "重置") else { return }
         do {
             if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval { try SMAppService.mainApp.unregister() }
             if FileManager.default.fileExists(atPath: AppFiles.settings.path) { try FileManager.default.removeItem(at: AppFiles.settings) }
@@ -273,7 +330,7 @@ final class Controller: ObservableObject {
         panel.title = "导出问题报告"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let info = """
-        PadDock 0.2.1 internal beta
+        PadDock 0.2.2 internal beta
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         API available: \(apiAvailable)
         Paired: \(settings.pairing != nil)
@@ -291,8 +348,7 @@ final class Controller: ObservableObject {
     }
 
     func migrateLegacy() {
-        guard requireEntitlement() else { return }
-        guard !busy, !nativeGate.isBusy, !legacyDiscoveryFailed, !legacy.isEmpty else { return }
+        guard !busy, !disconnecting, !nativeGate.isBusy, !legacyDiscoveryFailed, !legacy.isEmpty else { return }
         guard legacy.allSatisfy({ FileManager.default.fileExists(atPath: $0.plist.path) }) else {
             errorMessage = "检测到旧任务仍已加载，但找不到它的启动配置。为保证能够回滚，暂不接管；请先恢复旧任务的 plist 文件。"; return
         }
@@ -379,13 +435,6 @@ final class Controller: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.sampleMigration(pair, deadline: deadline, stableSince: stable, completion: completion)
         }
-    }
-    private func requireEntitlement() -> Bool {
-        commerce.refresh()
-        guard commerce.entitled else {
-            selectedPage = 3; commerce.message = "请先开始 14 天试用或输入激活码。"; return false
-        }
-        return true
     }
     private func refreshLegacy() {
         do { legacy = try AppFiles.legacyServices(); legacyDiscoveryFailed = false }

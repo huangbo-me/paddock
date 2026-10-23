@@ -12,14 +12,13 @@ struct Dashboard: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {
-                        Text(app.selectedPage == 0 ? "连接" : app.selectedPage == 1 ? "设置" : app.selectedPage == 3 ? "购买与激活" : "帮助")
+                        Text(app.selectedPage == 0 ? "连接" : app.selectedPage == 1 ? "设置" : "帮助")
                             .font(.system(size: 25, weight: .semibold, design: .rounded)).foregroundStyle(ink)
                         Spacer()
                     }
                     if let error = app.errorMessage { notice(error, icon: "exclamationmark.triangle.fill", warning: true) }
                     if app.selectedPage == 0 { connectionPage }
                     else if app.selectedPage == 1 { settingsPage }
-                    else if app.selectedPage == 3 { CommerceView(store: app.commerce) }
                     else { supportPage }
                 }.padding(30)
             }.background(paper)
@@ -36,10 +35,9 @@ struct Dashboard: View {
             }.padding(.top, 29).padding(.bottom, 34)
             nav("连接", icon: "cable.connector", index: 0)
             nav("设置", icon: "slider.horizontal.3", index: 1)
-            nav("购买与激活", icon: "key", index: 3)
             nav("帮助", icon: "questionmark.circle", index: 2)
             Spacer()
-            Text("PadDock 0.2.1").font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 25)
+            Text("PadDock 0.2.2").font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 25)
         }.padding(.horizontal, 18).frame(maxHeight: .infinity).background(Color.white)
     }
     private func nav(_ title: String, icon: String, index: Int) -> some View {
@@ -54,7 +52,6 @@ struct Dashboard: View {
     }
     private var connectionPage: some View {
         VStack(alignment: .leading, spacing: 20) {
-            CommerceBanner(store: app.commerce) { app.selectedPage = 3 }
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text(app.legacy.isEmpty ? "我的 iPad" : "发现旧版配置").font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
@@ -64,7 +61,7 @@ struct Dashboard: View {
                 deviceIllustration
                 Text(app.statusTitle).font(.system(size: 24, weight: .semibold, design: .rounded)).foregroundStyle(ink)
                 Text(app.statusSubtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
-                if app.busy { ProgressView().controlSize(.small) }
+                if app.busy || app.disconnecting { ProgressView().controlSize(.small) }
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(Color.white, in: RoundedRectangle(cornerRadius: 18))
 
             if !app.legacy.isEmpty {
@@ -93,10 +90,10 @@ struct Dashboard: View {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack { Label(app.settings.pairing?.name ?? "iPad", systemImage: "ipad").font(.system(size: 15, weight: .semibold)); Spacer(); Text("已绑定").font(.system(size: 11)).foregroundStyle(accent) }
                     HStack(spacing: 12) {
-                        Button("立即连接") { app.connectNow() }.buttonStyle(PrimaryStyle()).disabled(app.busy)
-                        Button(app.settings.paused ? "恢复自动连接" : "暂停自动连接") { app.togglePause() }.buttonStyle(.bordered).disabled(app.busy)
+                        Button(app.isConnected ? "已连接" : "立即连接") { app.connectNow() }.buttonStyle(PrimaryStyle()).disabled(app.busy || app.disconnecting || app.isConnected)
+                        Button(app.automaticConnectionTitle) { app.togglePause() }.buttonStyle(.bordered).disabled(app.busy || app.disconnecting)
                         Spacer()
-                        Button("断开") { app.disconnect() }.buttonStyle(.borderless).foregroundStyle(.secondary).disabled(app.busy || app.pairedDevice?.connected != true)
+                        Button(app.disconnecting ? "正在断开…" : "断开") { app.disconnect() }.buttonStyle(.borderless).foregroundStyle(.secondary).disabled(app.busy || app.disconnecting || (app.pairedDevice?.connected != true && app.pairedDevice?.online != true))
                     }
                 }.card()
             }
@@ -123,7 +120,7 @@ struct Dashboard: View {
                 preference("插线自动连接", "接上这台 iPad 后自动连接。", icon: "cable.connector", value: Binding(get: { app.settings.autoConnect }, set: app.setAutoConnect))
                 Divider().padding(.leading, 54)
                 preference("仅用 iPad 显示", "不接其他显示器时开启。", icon: "display.2", value: Binding(get: { app.settings.headless }, set: app.setHeadless))
-            }.card().disabled(!app.legacy.isEmpty || app.busy)
+            }.card().disabled(!app.legacy.isEmpty || app.busy || app.disconnecting)
             VStack(alignment: .leading, spacing: 12) {
                 preference("登录时启动", "登录 Mac 后自动运行。", icon: "power", value: Binding(get: { app.loginEnabled }, set: app.setLogin))
                 if app.needsLoginApproval { Button("在系统设置中允许") { app.openLoginSettings() }.buttonStyle(.bordered) }
@@ -148,7 +145,7 @@ struct Dashboard: View {
             }
             VStack(alignment: .leading, spacing: 12) {
                 Text("关于 PadDock").font(.system(size: 15, weight: .semibold))
-                Text("0.2.1 · 内测版").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("0.2.2 · 内测版").font(.system(size: 12)).foregroundStyle(.secondary)
             }.card()
         }
     }
